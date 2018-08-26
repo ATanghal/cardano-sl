@@ -191,6 +191,17 @@ let
       staging.wallet = mkDocker { environment = "mainnet-staging"; };
       testnet.wallet = mkDocker { environment = "testnet"; };
     };
+    acceptanceTests = let
+      acceptanceTest = pkgs.callPackage ./scripts/test/acceptance;
+      mkTest = environment: {
+        full  = acceptanceTest { inherit environment; resume = false; };
+        quick = acceptanceTest { inherit environment; resume = true; };
+      };
+    in {
+      mainnet = mkTest "mainnet";
+      staging = mkTest "mainnet-staging";
+      testnet = mkTest "testnet";
+    };
 
     cardano-sl-config = pkgs.runCommand "cardano-sl-config" {} ''
       mkdir -p $out/lib
