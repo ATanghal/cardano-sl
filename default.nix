@@ -193,15 +193,11 @@ let
     };
     acceptanceTests = let
       acceptanceTest = pkgs.callPackage ./scripts/test/acceptance;
-      mkTest = environment: {
+      mkTest = { environment, ...}: {
         full  = acceptanceTest { inherit environment; resume = false; };
         quick = acceptanceTest { inherit environment; resume = true; };
       };
-    in {
-      mainnet = mkTest "mainnet";
-      staging = mkTest "mainnet-staging";
-      testnet = mkTest "testnet";
-    };
+    in localLib.forEnvironments mkTest;
 
     cardano-sl-config = pkgs.runCommand "cardano-sl-config" {} ''
       mkdir -p $out/lib
