@@ -21,72 +21,70 @@ let
 
 in
   pkgs.writeScript "acceptance-tests-${environment}" ''
-  #!${pkgs.stdenv.shell}
-  export PATH=${pkgs.lib.makeBinPath allDeps}:$PATH
-  # Set to 0 (passing) by default. Tests using this cluster can set this variable
-  # to force the `stop_wallet` function to exit with a different code.
-  EXIT_STATUS=0
-  function stop_wallet {
-    trap "" INT TERM
-    echo "Received TERM!"
-    echo Killing wallet pid $wallet_pid
-    kill $wallet_pid
-    wait
-    echo "Exiting with code $EXIT_STATUS!"
-    exit $EXIT_STATUS
-  }
+    #!${pkgs.stdenv.shell}
+    export PATH=${pkgs.lib.makeBinPath allDeps}:$PATH
+    # Set to 0 (passing) by default. Tests using this cluster can set this variable
+    # to force the `stop_wallet` function to exit with a different code.
+    EXIT_STATUS=0
+    function stop_wallet {
+      trap "" INT TERM
+      echo "Received TERM!"
+      echo Killing wallet pid $wallet_pid
+      kill $wallet_pid
+      wait
+      echo "Exiting with code $EXIT_STATUS!"
+      exit $EXIT_STATUS
+    }
 
-  system_start=1  # fixme: remove?
+    ${optionalString (!resume) ''
+      # Remove previous state
+      rm -rf ${stateDir}
+    ''}
+    mkdir -p ${stateDir}/logs
 
-  ${optionalString (!resume) ''
-    # Remove previous state
-    rm -rf ${stateDir}
-  ''}
-  mkdir -p ${stateDir}/logs
+    trap "stop_wallet" INT TERM
 
-  trap "stop_wallet" INT TERM
+    ${utf8LocaleSetting}
+    echo Launching wallet node: ${wallet}
+    ${wallet} &> ${stateDir}/logs/wallet.log &
+    wallet_pid=$!
 
-  ${utf8LocaleSetting}
-  echo Launching wallet node: ${wallet}
-  ${wallet} --runtime-args "--system-start $system_start" &> ${stateDir}/logs/wallet.log &
-  wallet_pid=$!
+    start_time=$(date +%s)
 
-  start_time=$(date +%s)
+    # Query node info until synced
+    counter=0
+    perc=0
+    while [[ $perc != 100 ]]
+    do
+      info=$(curl --silent --cacert ${stateDir}/tls/client/ca.crt --cert ${stateDir}/tls/client/client.pem https://${wallet.walletListen}/api/v1/node-info | jq .data)
+      perc=$(jq .syncProgress.quantity <<< "$info")
+      height=$(jq .blockchainHeight.quantity <<< "$info")
+      local_height=$(jq .localBlockchainHeight.quantity <<< "$info")
 
-  # Query node info until synced
-  counter=0
-  perc=0
-  while [[ $perc != 100 ]]
-  do
-    info=$(curl --silent --cacert ${stateDir}/tls/client/ca.crt --cert ${stateDir}/tls/client/client.pem https://${wallet.walletListen}/api/v1/node-info | jq .data)
-    perc=$(jq .syncProgress.quantity <<< "$info")
-    height=$(jq .blockchainHeight.quantity <<< "$info")
-    local_height=$(jq .localBlockchainHeight.quantity <<< "$info")
-
-    if [[ $perc == "100" ]]
-    then
-      echo "Blockchain synced: $perc%  $height blocks"
-    else
-      if [[ -z "$perc" ]]; then
-        echo "Blockchain syncing..."
+      if [[ $perc == "100" ]]
+      then
+        echo "Blockchain synced: $perc%  $height blocks"
       else
-        echo "Blockchain syncing: $perc%  $local_height/$height blocks"
+        if [[ -z "$perc" ]]; then
+          echo "Blockchain syncing..."
+        else
+          echo "Blockchain syncing: $perc%  $local_height/$height blocks"
+        fi
+        counter=$((counter + 1))
+        sleep 10
       fi
-      counter=$((counter + 1))
-      sleep 10
-    fi
 
-    if ! kill -0 $wallet_pid; then
-      echo "Wallet is no longer running -- exiting"
-      exit 1
-    fi
-  done
+      if ! kill -0 $wallet_pid; then
+        echo "Wallet is no longer running -- exiting"
+        exit 1
+      fi
+    done
 
-  finish_time=$(date +%s)
-  elapsed_time=$(($finish_time - $start_time))
+    finish_time=$(date +%s)
+    elapsed_time=$(($finish_time - $start_time))
 
-  echo
-  echo "Blockchain sync complete!"
-  echo "Blockchain height: $height blocks"
-  echo "Elapsed time: $elapsed_time seconds"
-''
+    echo
+    echo "Blockchain sync complete!"
+    echo "Blockchain height: $height blocks"
+    echo "Elapsed time: $elapsed_time seconds"
+  ''
